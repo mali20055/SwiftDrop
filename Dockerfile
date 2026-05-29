@@ -27,7 +27,7 @@ COPY . .
 RUN npm run build
 
 # Copy static assets next to the standalone server
-RUN cp -r public .next/standalone/public \
+RUN mkdir -p .next/standalone/public \
     && cp -r .next/static .next/standalone/.next/static
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
