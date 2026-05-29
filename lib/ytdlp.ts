@@ -1,6 +1,7 @@
 import { VideoMetadata, DownloadResponse, VideoFormat } from "./types";
 import { getPlatformFromUrl } from "./validators";
 import { spawn } from "child_process";
+import { existsSync } from "fs";
 import { promises as fs } from "fs";
 import { tmpdir, homedir } from "os";
 import { join } from "path";
@@ -84,33 +85,42 @@ function spawnYtDlpDownload(args: string[]): Promise<void> {
   });
 }
 
-// Returns cookie args for Twitter/X URLs, in priority order:
-//   1. twitter_cookies.txt in project root (Netscape format, exported via browser extension)
-//   2. --cookies-from-browser <browser> (firefox → chrome → edge), skipping DPAPI-locked ones
-//   3. [] — no cookies, caller shows auth hint
-async function resolveCookieArgs(url: string): Promise<string[]> {
-  if (!url.includes("twitter.com") && !url.includes("x.com")) return [];
+// Cookie file resolution priority per platform:
+//   youtube → /etc/secrets/youtube_cookies.txt (Render secret file)
+//   twitter → /etc/secrets/twitter_cookies.txt → twitter_cookies.txt (project root) → browser
+const SECRETS_DIR = "/etc/secrets";
 
-  const cookiesFile = join(process.cwd(), "twitter_cookies.txt");
-  try {
-    await fs.access(cookiesFile);
-    return ["--cookies", cookiesFile];
-  } catch {
-    // file not present, fall through to browser extraction
+function cookieFileArgs(platform: "youtube" | "twitter"): string[] {
+  const secretFile = join(SECRETS_DIR, `${platform}_cookies.txt`);
+  if (existsSync(secretFile)) return ["--cookies", secretFile];
+
+  if (platform === "twitter") {
+    const localFile = join(process.cwd(), "twitter_cookies.txt");
+    if (existsSync(localFile)) return ["--cookies", localFile];
   }
 
-  for (const browser of TWITTER_COOKIE_BROWSERS) {
-    try {
-      await spawnYtDlp([
-        "--cookies-from-browser", browser,
-        "--simulate", "--quiet",
-        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-      ]);
-      return ["--cookies-from-browser", browser];
-    } catch (err: any) {
-      const isDpapiError = (err.message ?? "").includes("Could not copy") ||
-                           (err.message ?? "").includes("cookie database");
-      if (!isDpapiError) return ["--cookies-from-browser", browser];
+  return [];
+}
+
+async function resolveCookieArgs(platform: "youtube" | "twitter"): Promise<string[]> {
+  const fileArgs = cookieFileArgs(platform);
+  if (fileArgs.length > 0) return fileArgs;
+
+  // Browser fallback only for Twitter (YouTube works without auth for most content)
+  if (platform === "twitter") {
+    for (const browser of TWITTER_COOKIE_BROWSERS) {
+      try {
+        await spawnYtDlp([
+          "--cookies-from-browser", browser,
+          "--simulate", "--quiet",
+          "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        ]);
+        return ["--cookies-from-browser", browser];
+      } catch (err: any) {
+        const isDpapiError = (err.message ?? "").includes("Could not copy") ||
+                             (err.message ?? "").includes("cookie database");
+        if (!isDpapiError) return ["--cookies-from-browser", browser];
+      }
     }
   }
 
@@ -132,7 +142,7 @@ export async function fetchMetadata(url: string): Promise<VideoMetadata> {
     throw new Error("Desteklenmeyen bir video platformu URL'si sağlandı.");
   }
 
-  const cookieArgs = await resolveCookieArgs(url);
+  const cookieArgs = await resolveCookieArgs(platform);
   let raw: string;
   try {
     raw = await spawnYtDlp([...cookieArgs, "--dump-json", "--no-playlist", url]);
@@ -188,7 +198,7 @@ export async function downloadVideo(url: string, quality: string): Promise<Downl
   const format = QUALITY_FORMAT[quality];
   if (!format) throw new Error(`Geçersiz kalite seçimi: ${quality}`);
 
-  const cookieArgs = await resolveCookieArgs(url);
+  const cookieArgs = await resolveCookieArgs(platform);
   const ext = quality === "audio" ? "m4a" : "mp4";
   const tmpFile = join(
     tmpdir(),
