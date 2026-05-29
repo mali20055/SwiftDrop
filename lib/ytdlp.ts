@@ -1,7 +1,7 @@
 import { VideoMetadata, DownloadResponse, VideoFormat } from "./types";
 import { getPlatformFromUrl } from "./validators";
 import { spawn } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, copyFileSync } from "fs";
 import { promises as fs } from "fs";
 import { tmpdir, homedir } from "os";
 import { join } from "path";
@@ -92,7 +92,15 @@ const SECRETS_DIR = "/etc/secrets";
 
 function cookieFileArgs(platform: "youtube" | "twitter"): string[] {
   const secretFile = join(SECRETS_DIR, `${platform}_cookies.txt`);
-  if (existsSync(secretFile)) return ["--cookies", secretFile];
+  if (existsSync(secretFile)) {
+    const tmpFile = join("/tmp", `${platform}_cookies.txt`);
+    try {
+      copyFileSync(secretFile, tmpFile);
+      return ["--cookies", tmpFile];
+    } catch {
+      return [];
+    }
+  }
 
   if (platform === "twitter") {
     const localFile = join(process.cwd(), "twitter_cookies.txt");
