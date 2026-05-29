@@ -1,0 +1,8 @@
+.git
+.next
+node_modules
+*.dump
+twitter_cookies.txt
+.env.local
+.env*.local
+coverage
